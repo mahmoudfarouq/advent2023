@@ -1,5 +1,5 @@
 use aoc_runner_derive::{aoc, aoc_generator};
-use itertools::{min, Itertools};
+use itertools::{max, min, Itertools};
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Range {
@@ -29,6 +29,10 @@ impl Map {
     fn map(&self, n: usize) -> usize {
         self.ranges.iter().find_map(|r| r.map(n)).unwrap_or(n)
         // self.another_map(n, 1).first().unwrap().0
+    }
+
+    fn map_range(&self, n: usize, length: usize) -> Vec<(usize, usize)> {
+        let mut result =
     }
 }
 
@@ -80,47 +84,90 @@ fn day5_part1(input: &ParsedInput) -> usize {
         .unwrap()
 }
 
+fn help(ranges: &[Range], seed: usize) -> (Option<usize>, usize) {
+    for (i, range) in ranges.iter().enumerate() {
+        if let Some(new) = range.map(seed) {
+            return (Some(i), new);
+        }
+    }
+
+    (None, seed)
+}
+
 #[aoc(day5, part2)]
 fn day5_part2(input: &ParsedInput) -> usize {
-    let mut min = usize::MAX;
-
-    let x = input
+    let mut seeds = input
         .seeds
         .clone()
         .into_iter()
         .tuples::<(usize, usize)>()
+        .map(|(x, y)| (x, y, 0))
         .collect::<Vec<_>>();
 
-    // let seeds = vec![];
+    let mut minm = usize::MAX;
+    while let Some((seed, length, stage)) = seeds.pop() {
+        if stage >= input.maps.len() {
+            if seed < minm {
+                minm = seed;
+            }
 
-    for (seed, length) in x {
-        let mut moving_seed = seed;
+            continue;
+        }
 
-        while moving_seed < seed + length {
-            let mut result = moving_seed;
+        match help(&input.maps[stage].ranges, seed) {
+            (Some(i), new) => {
+                let r = &input.maps[stage].ranges[i];
+                let lower = new;
+                let upper = *min(&[r.destination + r.length, new + length]).unwrap();
 
-            for map in input.maps.iter() {
-                for range in map.ranges.iter() {
-                    if let Some(new) = range.map(result) {
-                        result = new;
-                        break;
+                let left_length = upper - lower;
+                seeds.push((new, left_length, stage + 1));
 
-                        // let diff = range.destination - new;
-                        //
-                        // seed += diff
-                    }
+                if length > left_length {
+                    let right_length = length - left_length;
+                    seeds.push((new + left_length, right_length, stage))
                 }
             }
-
-            if result < min {
-                min = result
+            (None, new) => {
+                seeds.push((new, 1, stage + 1));
+                if length > 1 {
+                    seeds.push((new + 1, length - 1, stage));
+                }
             }
-
-            moving_seed += 1;
         }
     }
 
-    min
+    minm
+
+    // let mut min = usize::MAX;
+    // for (seed, length) in x {
+    //     let mut moving_seed = seed;
+    //
+    //     while moving_seed < seed + length {
+    //         let mut result = moving_seed;
+    //
+    //         for map in input.maps.iter() {
+    //             for range in map.ranges.iter() {
+    //                 if let Some(new) = range.map(result) {
+    //                     result = new;
+    //                     break;
+    //
+    //                     // let diff = range.destination - new;
+    //                     //
+    //                     // seed += diff
+    //                 }
+    //             }
+    //         }
+    //
+    //         if result < min {
+    //             min = result
+    //         }
+    //
+    //         moving_seed += 1;
+    //     }
+    // }
+    //
+    // min
 
     // input
     //     .seeds
