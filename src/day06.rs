@@ -11,10 +11,10 @@ pub struct Race {
 
 impl From<(usize, usize)> for Race {
     fn from((t, d): (usize, usize)) -> Self {
-        return Race {
+        Race {
             time: Duration::from_millis(t as u64),
             distance: d,
-        };
+        }
     }
 }
 

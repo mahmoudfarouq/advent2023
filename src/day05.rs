@@ -200,7 +200,7 @@ fn day5_part2(input: &ParsedInput) -> usize {
 
     let mut minm = usize::MAX;
     while let Some((range, stage)) = seeds.pop() {
-        let Range { start, length } = range;
+        let Range { start, length: _ } = range;
         if stage >= input.maps.len() {
             if start < minm {
                 minm = start;
