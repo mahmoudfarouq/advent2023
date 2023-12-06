@@ -1,20 +1,65 @@
+use crate::day05::parser::ranges;
 use aoc_runner_derive::{aoc, aoc_generator};
 use itertools::{max, min, Itertools};
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Range {
-    destination: usize,
-    source: usize,
+    start: usize,
     length: usize,
 }
 
 impl Range {
-    fn map(&self, n: usize) -> Option<usize> {
-        if self.source <= n && n < self.source + self.length {
-            Some(self.destination + n - self.source)
-        } else {
-            None
+    fn end(&self) -> usize {
+        self.start + self.length
+    }
+
+    fn intersect(&self, other: &Range) -> Option<Range> {
+        if self.end() < other.start || other.end() < self.start {
+            return None;
         }
+
+        let start = if self.start < other.start {
+            other.start
+        } else {
+            self.start
+        };
+
+        let end = if self.end() > other.end() {
+            other.end()
+        } else {
+            self.end()
+        };
+
+        Some(Range {
+            start,
+            length: end - start,
+        })
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct CompoundRange {
+    source: Range,
+    destination: Range,
+}
+
+impl CompoundRange {
+    fn map(&self, n: usize) -> Option<usize> {
+        let t = &Range {
+            start: n,
+            length: 1,
+        };
+
+        self.source
+            .intersect(t)
+            .map(|_| self.destination.start + n - self.source.start)
+        // if self.source.start <= n && n < self.source.start + self.source.length {
+        //     Some(self.destination + n - self.source.start)
+        // } else {
+        //     None
+        // }
+
+        // None
     }
 }
 
@@ -22,17 +67,13 @@ impl Range {
 pub struct Map {
     from: String,
     to: String,
-    ranges: Vec<Range>,
+    ranges: Vec<CompoundRange>,
 }
 
 impl Map {
     fn map(&self, n: usize) -> usize {
         self.ranges.iter().find_map(|r| r.map(n)).unwrap_or(n)
         // self.another_map(n, 1).first().unwrap().0
-    }
-
-    fn map_range(&self, n: usize, length: usize) -> Vec<(usize, usize)> {
-        let mut result =
     }
 }
 
@@ -94,6 +135,26 @@ fn help(ranges: &[Range], seed: usize) -> (Option<usize>, usize) {
     (None, seed)
 }
 
+fn another_helper(ranges: &[Range], seed: usize) -> usize {
+    let mut min_distance = usize::MAX;
+    let mut best_i = 0;
+
+    for (i, range) in ranges.iter().enumerate() {
+        let distance = if range.source > seed {
+            range.source - seed
+        } else {
+            range.source + range.destination - seed
+        };
+
+        if distance < min_distance {
+            min_distance = distance;
+            best_i = i;
+        }
+    }
+
+    best_i
+}
+
 #[aoc(day5, part2)]
 fn day5_part2(input: &ParsedInput) -> usize {
     let mut seeds = input
@@ -129,9 +190,29 @@ fn day5_part2(input: &ParsedInput) -> usize {
                 }
             }
             (None, new) => {
-                seeds.push((new, 1, stage + 1));
-                if length > 1 {
-                    seeds.push((new + 1, length - 1, stage));
+                let closes_range = another_helper(&input.maps[stage].ranges, seed);
+                let closes_range = &input.maps[stage].ranges[closes_range];
+
+                if seed < closes_range.source {
+                    seeds.push((
+                        new,
+                        *min(&[closes_range.source - seed, length]).unwrap(),
+                        stage + 1,
+                    ));
+
+                    if closes_range.source < seed + length {
+                        seeds.push((new, seed + length - closes_range.source, stage + 1));
+                    }
+                } else {
+                    seeds.push((
+                        new,
+                        *max(&[closes_range.source + closes_range.length, length]).unwrap(),
+                        stage + 1,
+                    ));
+
+                    if closes_range.source < seed + length {
+                        seeds.push((new, seed + length - closes_range.source, stage + 1));
+                    }
                 }
             }
         }
