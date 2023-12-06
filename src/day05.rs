@@ -1,11 +1,22 @@
-use crate::day05::parser::ranges;
 use aoc_runner_derive::{aoc, aoc_generator};
 use itertools::{max, min, Itertools};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub struct Range {
     start: usize,
     length: usize,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+struct ClipResult {
+    contained: Vec<Range>,
+    un_contained: Vec<Range>,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+struct SplitResult {
+    contained: Vec<(Range, CompoundRange)>,
+    un_contained: Vec<Range>,
 }
 
 impl Range {
@@ -13,53 +24,98 @@ impl Range {
         self.start + self.length
     }
 
-    fn intersect(&self, other: &Range) -> Option<Range> {
-        if self.end() < other.start || other.end() < self.start {
-            return None;
+    fn clip(&self, cheese: &Range) -> ClipResult {
+        let mut cheese = *cheese;
+        let mut result = ClipResult {
+            contained: vec![],
+            un_contained: vec![],
+        };
+
+        // This means our chees will be cut from the left.
+        if cheese.start < self.start {
+            let end = *min(&[cheese.end(), self.start]).unwrap();
+
+            result.un_contained.push(Range {
+                start: cheese.start,
+                length: end - cheese.start,
+            });
+
+            cheese.length -= end - cheese.start;
+            cheese.start = end;
         }
 
-        let start = if self.start < other.start {
-            other.start
-        } else {
-            self.start
+        // This means our chees will be cut from the right.
+        if cheese.end() > self.end() {
+            let start = *max(&[cheese.start, self.end()]).unwrap();
+
+            result.un_contained.push(Range {
+                start,
+                length: cheese.end() - start,
+            });
+
+            cheese.length -= cheese.end() - start;
+        }
+
+        // If contained or on the thing.
+        if cheese.length > 0 {
+            result.contained.push(cheese)
+        }
+
+        result
+    }
+
+    fn split_on_ranges(&self, ranges: &[CompoundRange]) -> SplitResult {
+        let mut result = SplitResult {
+            contained: vec![],
+            un_contained: vec![*self],
         };
 
-        let end = if self.end() > other.end() {
-            other.end()
-        } else {
-            self.end()
-        };
+        for cr in ranges {
+            let mut new_un_contained = vec![];
 
-        Some(Range {
-            start,
-            length: end - start,
-        })
+            for uc in result.un_contained {
+                let sub = cr.source.clip(&uc);
+
+                for r in sub.contained {
+                    result.contained.push((r, *cr))
+                }
+
+                new_un_contained.extend(sub.un_contained);
+            }
+
+            result.un_contained = new_un_contained;
+        }
+
+        result
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub struct CompoundRange {
     source: Range,
     destination: Range,
 }
 
 impl CompoundRange {
+    fn new(destination: usize, source: usize, length: usize) -> Self {
+        Self {
+            source: Range {
+                start: source,
+                length,
+            },
+            destination: Range {
+                start: destination,
+                length,
+            },
+        }
+    }
+
     fn map(&self, n: usize) -> Option<usize> {
-        let t = &Range {
-            start: n,
-            length: 1,
-        };
-
-        self.source
-            .intersect(t)
-            .map(|_| self.destination.start + n - self.source.start)
-        // if self.source.start <= n && n < self.source.start + self.source.length {
-        //     Some(self.destination + n - self.source.start)
-        // } else {
-        //     None
-        // }
-
-        // None
+        if self.source.start <= n && n < self.source.start + self.source.length {
+            Some(self.destination.start + n - self.source.start)
+        } else {
+            None
+        }
     }
 }
 
@@ -73,7 +129,6 @@ pub struct Map {
 impl Map {
     fn map(&self, n: usize) -> usize {
         self.ranges.iter().find_map(|r| r.map(n)).unwrap_or(n)
-        // self.another_map(n, 1).first().unwrap().0
     }
 }
 
@@ -95,10 +150,10 @@ peg::parser! {
 
         pub rule name() -> String = from:$(['a'..='z']+) { from.to_string() }
 
-        pub rule range() -> Range
-            = destination:number() sep() source:number() sep() length:number() {Range {destination, source,length}}
+        pub rule range() -> CompoundRange
+            = destination:number() sep() source:number() sep() length:number() {CompoundRange::new(destination, source,length)}
 
-        pub rule ranges() -> Vec<Range> = ranges:(range() ** "\n")
+        pub rule ranges() -> Vec<CompoundRange> = ranges:(range() ** "\n")
 
         pub rule map() -> Map
             = from:name() "-to-" to:name() sep() "map:\n" ranges:ranges() { Map{from, to, ranges} }
@@ -125,36 +180,6 @@ fn day5_part1(input: &ParsedInput) -> usize {
         .unwrap()
 }
 
-fn help(ranges: &[Range], seed: usize) -> (Option<usize>, usize) {
-    for (i, range) in ranges.iter().enumerate() {
-        if let Some(new) = range.map(seed) {
-            return (Some(i), new);
-        }
-    }
-
-    (None, seed)
-}
-
-fn another_helper(ranges: &[Range], seed: usize) -> usize {
-    let mut min_distance = usize::MAX;
-    let mut best_i = 0;
-
-    for (i, range) in ranges.iter().enumerate() {
-        let distance = if range.source > seed {
-            range.source - seed
-        } else {
-            range.source + range.destination - seed
-        };
-
-        if distance < min_distance {
-            min_distance = distance;
-            best_i = i;
-        }
-    }
-
-    best_i
-}
-
 #[aoc(day5, part2)]
 fn day5_part2(input: &ParsedInput) -> usize {
     let mut seeds = input
@@ -162,113 +187,49 @@ fn day5_part2(input: &ParsedInput) -> usize {
         .clone()
         .into_iter()
         .tuples::<(usize, usize)>()
-        .map(|(x, y)| (x, y, 0))
+        .map(|(x, y)| {
+            (
+                Range {
+                    start: x,
+                    length: y,
+                },
+                0,
+            )
+        })
         .collect::<Vec<_>>();
 
     let mut minm = usize::MAX;
-    while let Some((seed, length, stage)) = seeds.pop() {
+    while let Some((range, stage)) = seeds.pop() {
+        let Range { start, length } = range;
         if stage >= input.maps.len() {
-            if seed < minm {
-                minm = seed;
+            if start < minm {
+                minm = start;
             }
 
             continue;
         }
 
-        match help(&input.maps[stage].ranges, seed) {
-            (Some(i), new) => {
-                let r = &input.maps[stage].ranges[i];
-                let lower = new;
-                let upper = *min(&[r.destination + r.length, new + length]).unwrap();
+        let SplitResult {
+            contained,
+            un_contained,
+        } = range.split_on_ranges(&input.maps[stage].ranges);
 
-                let left_length = upper - lower;
-                seeds.push((new, left_length, stage + 1));
+        for (r, cr) in contained {
+            seeds.push((
+                Range {
+                    start: cr.map(r.start).unwrap(),
+                    ..r
+                },
+                stage + 1,
+            ));
+        }
 
-                if length > left_length {
-                    let right_length = length - left_length;
-                    seeds.push((new + left_length, right_length, stage))
-                }
-            }
-            (None, new) => {
-                let closes_range = another_helper(&input.maps[stage].ranges, seed);
-                let closes_range = &input.maps[stage].ranges[closes_range];
-
-                if seed < closes_range.source {
-                    seeds.push((
-                        new,
-                        *min(&[closes_range.source - seed, length]).unwrap(),
-                        stage + 1,
-                    ));
-
-                    if closes_range.source < seed + length {
-                        seeds.push((new, seed + length - closes_range.source, stage + 1));
-                    }
-                } else {
-                    seeds.push((
-                        new,
-                        *max(&[closes_range.source + closes_range.length, length]).unwrap(),
-                        stage + 1,
-                    ));
-
-                    if closes_range.source < seed + length {
-                        seeds.push((new, seed + length - closes_range.source, stage + 1));
-                    }
-                }
-            }
+        for r in un_contained {
+            seeds.push((r, stage + 1));
         }
     }
 
     minm
-
-    // let mut min = usize::MAX;
-    // for (seed, length) in x {
-    //     let mut moving_seed = seed;
-    //
-    //     while moving_seed < seed + length {
-    //         let mut result = moving_seed;
-    //
-    //         for map in input.maps.iter() {
-    //             for range in map.ranges.iter() {
-    //                 if let Some(new) = range.map(result) {
-    //                     result = new;
-    //                     break;
-    //
-    //                     // let diff = range.destination - new;
-    //                     //
-    //                     // seed += diff
-    //                 }
-    //             }
-    //         }
-    //
-    //         if result < min {
-    //             min = result
-    //         }
-    //
-    //         moving_seed += 1;
-    //     }
-    // }
-    //
-    // min
-
-    // input
-    //     .seeds
-    //     .clone()
-    //     .into_iter()
-    //     .tuples::<(usize, usize)>()
-    //     .map(|(seed, length)| input.maps.iter().fold(s, |acc, m| m.map(acc)))
-    //     .min()
-    //     .unwrap()
-
-    // input
-    //     .seeds
-    //     .clone()
-    //     .into_iter()
-    //     .tuples::<(usize, usize)>()
-    //     // .map(|(x, _)| x)
-    //     .flat_map(|(from, length)| from..from + length)
-    //     .map(|s| input.maps.iter().fold(s, |acc, m| m.map(acc)))
-    //     .min()
-    //     .unwrap()
 }
 
 #[cfg(test)]
@@ -322,135 +283,60 @@ mod tests {
                         from: "seed".to_string(),
                         to: "soil".to_string(),
                         ranges: vec![
-                            Range {
-                                destination: 50,
-                                source: 98,
-                                length: 2
-                            },
-                            Range {
-                                destination: 52,
-                                source: 50,
-                                length: 48
-                            }
-                        ]
+                            CompoundRange::new(50, 98, 2),
+                            CompoundRange::new(52, 50, 48),
+                        ],
                     },
                     Map {
                         from: "soil".to_string(),
                         to: "fertilizer".to_string(),
                         ranges: vec![
-                            Range {
-                                destination: 0,
-                                source: 15,
-                                length: 37
-                            },
-                            Range {
-                                destination: 37,
-                                source: 52,
-                                length: 2
-                            },
-                            Range {
-                                destination: 39,
-                                source: 0,
-                                length: 15
-                            }
-                        ]
+                            CompoundRange::new(0, 15, 37),
+                            CompoundRange::new(37, 52, 2),
+                            CompoundRange::new(39, 0, 15),
+                        ],
                     },
                     Map {
                         from: "fertilizer".to_string(),
                         to: "water".to_string(),
                         ranges: vec![
-                            Range {
-                                destination: 49,
-                                source: 53,
-                                length: 8
-                            },
-                            Range {
-                                destination: 0,
-                                source: 11,
-                                length: 42
-                            },
-                            Range {
-                                destination: 42,
-                                source: 0,
-                                length: 7
-                            },
-                            Range {
-                                destination: 57,
-                                source: 7,
-                                length: 4
-                            }
-                        ]
+                            CompoundRange::new(49, 53, 8),
+                            CompoundRange::new(0, 11, 42),
+                            CompoundRange::new(42, 0, 7),
+                            CompoundRange::new(57, 7, 4),
+                        ],
                     },
                     Map {
                         from: "water".to_string(),
                         to: "light".to_string(),
                         ranges: vec![
-                            Range {
-                                destination: 88,
-                                source: 18,
-                                length: 7
-                            },
-                            Range {
-                                destination: 18,
-                                source: 25,
-                                length: 70
-                            }
-                        ]
+                            CompoundRange::new(88, 18, 7),
+                            CompoundRange::new(18, 25, 70),
+                        ],
                     },
                     Map {
                         from: "light".to_string(),
                         to: "temperature".to_string(),
                         ranges: vec![
-                            Range {
-                                destination: 45,
-                                source: 77,
-                                length: 23
-                            },
-                            Range {
-                                destination: 81,
-                                source: 45,
-                                length: 19
-                            },
-                            Range {
-                                destination: 68,
-                                source: 64,
-                                length: 13
-                            }
-                        ]
+                            CompoundRange::new(45, 77, 23),
+                            CompoundRange::new(81, 45, 19),
+                            CompoundRange::new(68, 64, 13),
+                        ],
                     },
                     Map {
                         from: "temperature".to_string(),
                         to: "humidity".to_string(),
-                        ranges: vec![
-                            Range {
-                                destination: 0,
-                                source: 69,
-                                length: 1
-                            },
-                            Range {
-                                destination: 1,
-                                source: 0,
-                                length: 69
-                            }
-                        ]
+                        ranges: vec![CompoundRange::new(0, 69, 1), CompoundRange::new(1, 0, 69),],
                     },
                     Map {
                         from: "humidity".to_string(),
                         to: "location".to_string(),
                         ranges: vec![
-                            Range {
-                                destination: 60,
-                                source: 56,
-                                length: 37
-                            },
-                            Range {
-                                destination: 56,
-                                source: 93,
-                                length: 4
-                            }
-                        ]
-                    }
-                ]
+                            CompoundRange::new(60, 56, 37),
+                            CompoundRange::new(56, 93, 4),
+                        ],
+                    },
+                ],
             })
         )
     }
